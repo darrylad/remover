@@ -30,3 +30,13 @@ python main.py <PATH_TO_YOUR_CSV_FILE>
 Replace `<PATH_TO_YOUR_CSV_FILE>` with the path to your CSV file containing the data you want to open.
 
 Your source file will not be modified. Output will be saved to the outputs folder in the project root directory.
+
+### Screenshots
+
+<img width="1512" height="1176" alt="Selection on time-series plot" src="https://github.com/user-attachments/assets/80aaa177-d3e3-4449-b6ee-e886b973081e" />
+
+<img width="1512" height="1176" alt="Welch Fourier Transform plot after removal" src="https://github.com/user-attachments/assets/f41e3fc2-965d-4804-9f52-c3d5cf8814c8" />
+
+<img width="1512" height="1176" alt="Welch Fourier Transform plot before removal" src="https://github.com/user-attachments/assets/9b3aa4b0-a5d7-499e-8b68-6dbeac42df92" />
+
+<img width="1512" height="1176" alt="Welch Fourier Transform logarithmic plot" src="https://github.com/user-attachments/assets/26ddc7c9-8ffe-4d4e-a47c-ac144d4ff33b" />
