@@ -33,7 +33,7 @@ Your source file will not be modified. Output will be saved to the outputs folde
 
 ### Screenshots
 
-<img width="1512" height="1176" alt="Selection on time-series plot" src="https://github.com/user-attachments/assets/80aaa177-d3e3-4449-b6ee-e886b973081e" />
+<img width="1512" height="1178" alt="Selection on time-series plot" src="https://github.com/user-attachments/assets/5e2501a4-06df-4b19-9b7b-b08c9a14f8f9" />
 
 <img width="1512" height="1176" alt="Welch Fourier Transform plot after removal" src="https://github.com/user-attachments/assets/f41e3fc2-965d-4804-9f52-c3d5cf8814c8" />
 
