@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import SpanSelector, Button, TextBox, CheckButtons
 from matplotlib.gridspec import GridSpec
+from scipy import signal
 import sys
 import os
 from datetime import datetime
@@ -35,13 +36,41 @@ class VibrationDataRemover:
         self.selected_end = None
         
         # Scale mode: True = same scale, False = individual scales
-        self.same_scale = True
+        self.same_scale = False
+        
+        # View mode: 'time' or 'fft'
+        self.view_mode = 'time'
+        
+        # FFT comparison mode: 'current' or 'original'
+        self.fft_compare_mode = 'current'
+        
+        # FFT y-axis scale mode: True = logarithmic, False = linear
+        self.fft_log_scale = True
+        
+        # Cache for FFT data to maintain consistent scaling
+        self.fft_cache = {
+            'original': None,
+            'current': None
+        }
+        
+        # Calculate sampling rate
+        self.calculate_sampling_rate()
         
         # Create outputs folder if it doesn't exist
         self.output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'outputs')
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.setup_plot()
+    
+    def calculate_sampling_rate(self):
+        """Calculate the sampling rate from the data"""
+        if len(self.data) > 1:
+            time_diffs = np.diff(self.data[self.time_col].values)
+            avg_interval = np.mean(time_diffs)
+            self.sampling_rate = 1.0 / avg_interval if avg_interval > 0 else 1000.0
+        else:
+            self.sampling_rate = 1000.0  # Default fallback
+        print(f"Sampling rate: {self.sampling_rate:.2f} Hz")
     
     def setup_plot(self):
         """Create the interactive plot interface"""
@@ -58,11 +87,8 @@ class VibrationDataRemover:
         self.ax_controls = self.fig.add_subplot(gs[3, :])
         self.ax_controls.axis('off')
         
-        # Initial plot
-        self.plot_data()
-        
-        # Add SpanSelector to the top plot (works across all due to sharex)
-        self.span = SpanSelector(
+        # Add SpanSelector to all three plots (BEFORE plotting)
+        self.span_x = SpanSelector(
             self.ax_x,
             self.on_select,
             'horizontal',
@@ -72,6 +98,32 @@ class VibrationDataRemover:
             drag_from_anywhere=True
         )
         
+        self.span_y = SpanSelector(
+            self.ax_y,
+            self.on_select,
+            'horizontal',
+            useblit=True,
+            props=dict(alpha=0.3, facecolor='red'),
+            interactive=True,
+            drag_from_anywhere=True
+        )
+        
+        self.span_z = SpanSelector(
+            self.ax_z,
+            self.on_select,
+            'horizontal',
+            useblit=True,
+            props=dict(alpha=0.3, facecolor='red'),
+            interactive=True,
+            drag_from_anywhere=True
+        )
+        
+        # Store all span selectors for synchronization
+        self.span_selectors = [self.span_x, self.span_y, self.span_z]
+        
+        # NOW plot the data (after span_selectors exists)
+        self.plot_data()
+        
         # Add control widgets
         self.setup_controls()
         
@@ -79,7 +131,14 @@ class VibrationDataRemover:
         plt.show()
     
     def plot_data(self):
-        """Plot the three acceleration axes"""
+        """Plot the data based on current view mode"""
+        if self.view_mode == 'time':
+            self.plot_time_domain()
+        else:
+            self.plot_fft()
+    
+    def plot_time_domain(self):
+        """Plot the three acceleration axes in time domain"""
         # Clear previous plots
         self.ax_x.clear()
         self.ax_y.clear()
@@ -127,44 +186,258 @@ class VibrationDataRemover:
         self.ax_y.grid(True, alpha=0.3)
         self.ax_z.grid(True, alpha=0.3)
         
+        # Enable span selectors
+        for span in self.span_selectors:
+            span.set_active(True)
+        
+        self.fig.canvas.draw_idle()
+    
+    def compute_fft_data(self, data_source):
+        """Compute FFT data for given data source"""
+        if data_source == 'original':
+            data_to_use = self.original_data
+        else:
+            data_to_use = self.data
+        
+        x = data_to_use[self.x_col].values
+        y = data_to_use[self.y_col].values
+        z = data_to_use[self.z_col].values
+        
+        # Calculate Welch's PSD for each axis
+        nperseg = min(256, len(x) // 4)
+        
+        freq_x, psd_x = signal.welch(x, fs=self.sampling_rate, nperseg=nperseg)
+        freq_y, psd_y = signal.welch(y, fs=self.sampling_rate, nperseg=nperseg)
+        freq_z, psd_z = signal.welch(z, fs=self.sampling_rate, nperseg=nperseg)
+        
+        return {
+            'x': (freq_x, psd_x),
+            'y': (freq_y, psd_y),
+            'z': (freq_z, psd_z)
+        }
+    
+    def plot_fft(self):
+        """Plot Welch's power spectral density for all three axes"""
+        # Clear previous plots
+        self.ax_x.clear()
+        self.ax_y.clear()
+        self.ax_z.clear()
+        
+        # Compute or retrieve FFT data for both original and current
+        if self.fft_cache['original'] is None:
+            self.fft_cache['original'] = self.compute_fft_data('original')
+        
+        # Always recompute current data as it may have changed
+        self.fft_cache['current'] = self.compute_fft_data('current')
+        
+        # Get data to display based on mode
+        if self.fft_compare_mode == 'original':
+            display_data = self.fft_cache['original']
+            title_suffix = " (Original Data)"
+        else:
+            display_data = self.fft_cache['current']
+            title_suffix = " (Current Data)"
+        
+        freq_x, psd_x = display_data['x']
+        freq_y, psd_y = display_data['y']
+        freq_z, psd_z = display_data['z']
+        
+        # Plot PSD based on scale mode
+        if self.fft_log_scale:
+            self.ax_x.semilogy(freq_x, psd_x, 'b-', linewidth=1)
+            self.ax_y.semilogy(freq_y, psd_y, 'g-', linewidth=1)
+            self.ax_z.semilogy(freq_z, psd_z, 'r-', linewidth=1)
+        else:
+            self.ax_x.plot(freq_x, psd_x, 'b-', linewidth=1)
+            self.ax_y.plot(freq_y, psd_y, 'g-', linewidth=1)
+            self.ax_z.plot(freq_z, psd_z, 'r-', linewidth=1)
+        
+        # Calculate scales based on both original and current data
+        orig_data = self.fft_cache['original']
+        curr_data = self.fft_cache['current']
+        
+        if self.same_scale:
+            # Same scale across all axes - find global max/min
+            all_psd_values = []
+            for axis in ['x', 'y', 'z']:
+                all_psd_values.extend(orig_data[axis][1])
+                all_psd_values.extend(curr_data[axis][1])
+            
+            y_min = min(all_psd_values)
+            y_max = max(all_psd_values)
+            
+            if self.fft_log_scale:
+                # Add margin in log space
+                log_range = np.log10(y_max) - np.log10(y_min)
+                margin = log_range * 0.1
+                y_min_plot = 10 ** (np.log10(y_min) - margin)
+                y_max_plot = 10 ** (np.log10(y_max) + margin)
+            else:
+                # Add margin in linear space
+                margin = (y_max - y_min) * 0.1
+                y_min_plot = y_min - margin
+                y_max_plot = y_max + margin
+            
+            self.ax_x.set_ylim(y_min_plot, y_max_plot)
+            self.ax_y.set_ylim(y_min_plot, y_max_plot)
+            self.ax_z.set_ylim(y_min_plot, y_max_plot)
+        else:
+            # Individual scales - each axis based on its own original and current max/min
+            for ax, axis_name in [(self.ax_x, 'x'), (self.ax_y, 'y'), (self.ax_z, 'z')]:
+                axis_psd_values = list(orig_data[axis_name][1]) + list(curr_data[axis_name][1])
+                y_min = min(axis_psd_values)
+                y_max = max(axis_psd_values)
+                
+                if self.fft_log_scale:
+                    # Add margin in log space
+                    log_range = np.log10(y_max) - np.log10(y_min)
+                    margin = log_range * 0.1
+                    y_min_plot = 10 ** (np.log10(y_min) - margin)
+                    y_max_plot = 10 ** (np.log10(y_max) + margin)
+                else:
+                    # Add margin in linear space
+                    margin = (y_max - y_min) * 0.1
+                    y_min_plot = y_min - margin
+                    y_max_plot = y_max + margin
+                
+                ax.set_ylim(y_min_plot, y_max_plot)
+        
+        # Labels
+        self.ax_x.set_ylabel('PSD [V²/Hz]', fontsize=10)
+        self.ax_y.set_ylabel('PSD [V²/Hz]', fontsize=10)
+        self.ax_z.set_ylabel('PSD [V²/Hz]', fontsize=10)
+        self.ax_z.set_xlabel('Frequency [Hz]', fontsize=10)
+        
+        scale_mode = "Same Scale" if self.same_scale else "Individual Scales"
+        y_scale_mode = "Log" if self.fft_log_scale else "Linear"
+        self.ax_x.set_title(f'X-Axis FFT (Welch){title_suffix} ({scale_mode}, {y_scale_mode})', fontsize=11)
+        self.ax_y.set_title(f'Y-Axis FFT (Welch){title_suffix}', fontsize=11)
+        self.ax_z.set_title(f'Z-Axis FFT (Welch){title_suffix}', fontsize=11)
+        
+        self.ax_x.grid(True, alpha=0.3)
+        self.ax_y.grid(True, alpha=0.3)
+        self.ax_z.grid(True, alpha=0.3)
+        
+        # Disable span selectors in FFT mode
+        for span in self.span_selectors:
+            span.set_active(False)
+        
         self.fig.canvas.draw_idle()
     
     def setup_controls(self):
         """Setup control buttons and text boxes"""
         # Button positions (left, bottom, width, height)
-        btn_remove_ax = plt.axes([0.05, 0.02, 0.08, 0.04])
-        btn_undo_ax = plt.axes([0.14, 0.02, 0.08, 0.04])
-        btn_save_ax = plt.axes([0.23, 0.02, 0.08, 0.04])
-        btn_reset_ax = plt.axes([0.32, 0.02, 0.08, 0.04])
+        btn_remove_ax = plt.axes([0.02, 0.02, 0.06, 0.04])
+        btn_undo_ax = plt.axes([0.09, 0.02, 0.06, 0.04])
+        btn_save_ax = plt.axes([0.16, 0.02, 0.06, 0.04])
+        btn_reset_ax = plt.axes([0.23, 0.02, 0.06, 0.04])
+        btn_view_ax = plt.axes([0.30, 0.02, 0.08, 0.04])
         
-        # Checkbox for scale toggle (next to buttons)
-        checkbox_ax = plt.axes([0.42, 0.02, 0.1, 0.04])
+        # FFT comparison button (only visible in FFT mode)
+        btn_fft_compare_ax = plt.axes([0.39, 0.02, 0.08, 0.04])
+        
+        # Checkbox for scale toggle
+        checkbox_ax = plt.axes([0.48, 0.02, 0.1, 0.04])
+        
+        # Checkbox for FFT log/linear toggle (only visible in FFT mode)
+        checkbox_fft_scale_ax = plt.axes([0.59, 0.02, 0.08, 0.04])
         
         # Text boxes for precise input
-        txt_start_ax = plt.axes([0.62, 0.02, 0.12, 0.04])
-        txt_end_ax = plt.axes([0.78, 0.02, 0.12, 0.04])
+        txt_start_ax = plt.axes([0.75, 0.02, 0.1, 0.04])
+        txt_end_ax = plt.axes([0.88, 0.02, 0.1, 0.04])
         
         # Create buttons
         self.btn_remove = Button(btn_remove_ax, 'Remove', color='lightcoral')
         self.btn_undo = Button(btn_undo_ax, 'Undo', color='lightyellow')
         self.btn_save = Button(btn_save_ax, 'Save', color='lightgreen')
         self.btn_reset = Button(btn_reset_ax, 'Reset', color='lightblue')
+        self.btn_view = Button(btn_view_ax, 'FFT View', color='lightcyan')
+        self.btn_fft_compare = Button(btn_fft_compare_ax, 'Original', color='lightsalmon')
         
         # Create text boxes
         self.txt_start = TextBox(txt_start_ax, 'Start: ', initial='')
         self.txt_end = TextBox(txt_end_ax, 'End: ', initial='')
         
-        # Create checkbox for scale toggle
+        # Create checkboxes
         self.check_scale = CheckButtons(checkbox_ax, ['Same Scale'], [self.same_scale])
+        self.check_fft_scale = CheckButtons(checkbox_fft_scale_ax, ['Log Scale'], [self.fft_log_scale])
         
         # Connect callbacks
         self.btn_remove.on_clicked(self.remove_range)
         self.btn_undo.on_clicked(self.undo_removal)
         self.btn_save.on_clicked(self.save_data)
         self.btn_reset.on_clicked(self.reset_data)
+        self.btn_view.on_clicked(self.toggle_view)
+        self.btn_fft_compare.on_clicked(self.toggle_fft_compare)
         self.txt_start.on_submit(self.update_start)
         self.txt_end.on_submit(self.update_end)
         self.check_scale.on_clicked(self.toggle_scale)
+        self.check_fft_scale.on_clicked(self.toggle_fft_scale)
+        
+        # Update button visibility
+        self.update_button_visibility()
+    
+    def update_button_visibility(self):
+        """Update button visibility and labels based on view mode"""
+        if self.view_mode == 'time':
+            self.btn_view.label.set_text('FFT View')
+            self.btn_fft_compare.ax.set_visible(False)
+            self.check_fft_scale.ax.set_visible(False)
+            self.btn_remove.ax.set_visible(True)
+            self.txt_start.ax.set_visible(True)
+            self.txt_end.ax.set_visible(True)
+            
+            # Disable FFT-only widgets by setting their event connections inactive
+            self.btn_fft_compare.active = False
+            
+            # Enable time-domain widgets
+            self.btn_remove.active = True
+        else:
+            self.btn_view.label.set_text('Time View')
+            self.btn_fft_compare.ax.set_visible(True)
+            self.check_fft_scale.ax.set_visible(True)
+            self.btn_remove.ax.set_visible(False)
+            self.txt_start.ax.set_visible(False)
+            self.txt_end.ax.set_visible(False)
+            
+            # Enable FFT-only widgets
+            self.btn_fft_compare.active = True
+            
+            # Disable time-domain widgets
+            self.btn_remove.active = False
+            
+            # Update FFT compare button label
+            if self.fft_compare_mode == 'current':
+                self.btn_fft_compare.label.set_text('Original')
+            else:
+                self.btn_fft_compare.label.set_text('Current')
+        
+        self.fig.canvas.draw_idle()
+    
+    def toggle_view(self, event):
+        """Toggle between time domain and FFT view"""
+        if self.view_mode == 'time':
+            self.view_mode = 'fft'
+            self.fft_compare_mode = 'current'  # Reset to current when entering FFT mode
+            print("Switched to FFT view (Welch's method)")
+        else:
+            self.view_mode = 'time'
+            print("Switched to time domain view")
+        
+        self.update_button_visibility()
+        self.plot_data()
+    
+    def toggle_fft_compare(self, event):
+        """Toggle between current and original data in FFT view"""
+        if self.fft_compare_mode == 'current':
+            self.fft_compare_mode = 'original'
+            print("Showing FFT of original data")
+        else:
+            self.fft_compare_mode = 'current'
+            print("Showing FFT of current data")
+        
+        self.update_button_visibility()
+        self.plot_data()
     
     def toggle_scale(self, label):
         """Toggle between same scale and individual scales"""
@@ -173,18 +446,39 @@ class VibrationDataRemover:
         print(f"Scale mode: {mode}")
         self.plot_data()
     
+    def toggle_fft_scale(self, label):
+        """Toggle between logarithmic and linear scale for FFT"""
+        self.fft_log_scale = not self.fft_log_scale
+        scale_type = "logarithmic" if self.fft_log_scale else "linear"
+        print(f"FFT Y-axis scale: {scale_type}")
+        self.plot_data()
+    
     def on_select(self, xmin, xmax):
         """Callback when range is selected with SpanSelector"""
+        if self.view_mode != 'time':
+            return
+        
         self.selected_start = xmin
         self.selected_end = xmax
         self.txt_start.set_val(f'{xmin:.4f}')
         self.txt_end.set_val(f'{xmax:.4f}')
         print(f"Selected range: {xmin:.4f} to {xmax:.4f}")
+        
+        # Synchronize selection across all span selectors
+        for span in self.span_selectors:
+            if span.extents != (xmin, xmax):
+                span.extents = (xmin, xmax)
+        
+        # Force redraw
+        self.fig.canvas.draw_idle()
     
     def update_start(self, text):
         """Update start time from text box"""
         try:
             self.selected_start = float(text)
+            # Update span selectors if both start and end are set
+            if self.selected_end is not None:
+                self.sync_span_selectors(self.selected_start, self.selected_end)
         except ValueError:
             print("Invalid start time")
     
@@ -192,8 +486,17 @@ class VibrationDataRemover:
         """Update end time from text box"""
         try:
             self.selected_end = float(text)
+            # Update span selectors if both start and end are set
+            if self.selected_start is not None:
+                self.sync_span_selectors(self.selected_start, self.selected_end)
         except ValueError:
             print("Invalid end time")
+    
+    def sync_span_selectors(self, xmin, xmax):
+        """Synchronize all span selectors to the same range"""
+        for span in self.span_selectors:
+            span.extents = (xmin, xmax)
+        self.fig.canvas.draw_idle()
     
     def find_nearest_index(self, time_value):
         """Find the index of the nearest actual data point to given time value"""
@@ -252,18 +555,19 @@ class VibrationDataRemover:
         print(f"Removed {len(indices_to_remove)} points")
         print(f"Time gap closed: {time_gap:.6f} (based on actual data points)")
         
-        # Calculate and display sampling rate info
-        if len(self.data) > 1:
-            time_diffs = np.diff(self.data[self.time_col].values)
-            avg_sampling_interval = np.mean(time_diffs)
-            sampling_rate = 1.0 / avg_sampling_interval if avg_sampling_interval > 0 else 0
-            print(f"Avg sampling interval: {avg_sampling_interval:.6f}s ({sampling_rate:.2f} Hz)")
+        # Recalculate sampling rate and invalidate FFT cache
+        self.calculate_sampling_rate()
+        self.fft_cache['current'] = None  # Invalidate current FFT cache
         
         # Clear selection
         self.selected_start = None
         self.selected_end = None
         self.txt_start.set_val('')
         self.txt_end.set_val('')
+        
+        # Clear all span selectors
+        for span in self.span_selectors:
+            span.extents = (0, 0)
         
         # Replot
         self.plot_data()
@@ -273,6 +577,8 @@ class VibrationDataRemover:
         if len(self.history) > 0:
             self.data = self.history.pop()
             print("Undone last removal")
+            self.calculate_sampling_rate()
+            self.fft_cache['current'] = None  # Invalidate current FFT cache
             self.plot_data()
         else:
             print("Nothing to undo")
@@ -282,6 +588,8 @@ class VibrationDataRemover:
         self.data = self.original_data.copy()
         self.history = []
         print("Reset to original data")
+        self.calculate_sampling_rate()
+        self.fft_cache['current'] = None  # Invalidate current FFT cache
         self.plot_data()
     
     def save_data(self, event):
@@ -318,9 +626,6 @@ def main():
     except FileNotFoundError as e:
         print(f"\n❌ Error: {e}")
         print("\nPlease check the file path and try again.")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
         sys.exit(1)
 
 
