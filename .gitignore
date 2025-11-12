@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 10 um_merged.csv
 .vscode/
+build/

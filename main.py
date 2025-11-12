@@ -699,9 +699,7 @@ def main():
     if len(sys.argv) > 1:
         csv_file = sys.argv[1]
     else:
-        print("=" * 60)
-        print("Vibration Data Anomaly Remover")
-        print("=" * 60)
+        print("Remover")
         csv_file = input("\nEnter the path to your CSV file: ").strip()
         csv_file = csv_file.strip('"').strip("'")
     

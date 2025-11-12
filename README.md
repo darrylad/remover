@@ -1,14 +1,15 @@
 # Remover
 
-Go to the project root directory and run:
+Go to the project root directory in Terminal and run:
 
 ### Setup Python venv
 
 ```bash
+# Create a virtual environment:
 python -m venv .venv
 
 # Activate the virtual environment:
-source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
+source .venv/bin/activate   # On Windows use `.venv\Scripts\activate`
 ```
 
 ### Get Requirements
@@ -16,6 +17,7 @@ source .venv/bin/activate  # On Windows use `.venv\Scripts\activate`
 ```bash
 pip install -r requirements.txt
 ```
+This will install the required packages into your virtual environment.
 
 ### Run
 
